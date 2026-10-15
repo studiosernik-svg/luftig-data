@@ -1,0 +1,51 @@
+# GitHub Actions для публичного репозитория данных (например, luftig-data).
+# Раз в сутки качает прогноз пыльцы CAMS, собирает pollen-de.bin.gz и
+# публикует его через GitHub Pages: https://<user>.github.io/luftig-data/pollen-de.bin.gz
+# Секрет ADS_KEY — личный ключ Atmosphere Data Store (Profile → API key).
+name: cams-pollen
+
+on:
+  schedule:
+    - cron: '30 7 * * *'   # 07:30 UTC: прогон 00 UTC обычно уже доступен
+    - cron: '30 10 * * *'  # запасной запуск, если ADS запаздывал
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: cams-pollen
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # очередь ADS бывает долгой
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r pipeline/cams/requirements.txt
+      - name: ADS credentials
+        run: |
+          printf 'url: https://ads.atmosphere.copernicus.eu/api\nkey: %s\n' "${{ secrets.ADS_KEY }}" > ~/.cdsapirc
+      - name: Build
+        run: python pipeline/cams/cams_pollen.py --out public
+      - name: Attribution
+        run: |
+          cat > public/index.html <<'HTML'
+          <!doctype html><meta charset="utf-8"><title>Luftig pollen data</title>
+          <p>Daily pollen forecast grid for Germany derived from the Copernicus Atmosphere Monitoring Service (CAMS) European air quality ensemble.
+          Contains modified Copernicus Atmosphere Monitoring Service information. Pollen forecasts are experimental.</p>
+          HTML
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - id: deploy
+        uses: actions/deploy-pages@v4
